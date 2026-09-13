@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nightcode — Live Collab Editor</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div id="landing" class="landing">
+  <div class="scroll-track">
+    <div class="landing-fixed">
+      <canvas id="webgl-canvas"></canvas>
+
+      <script id="js-vertex-shader" type="x-shader/x-vertex">
+attribute vec3 position;
+
+void main()	{
+  gl_Position = vec4(position, 1.0);
+}
+      </script>
+
+      <script id="js-fragment-shader" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2 resolution;
+uniform float time;
+uniform float xScale;
+uniform float yScale;
+uniform float distortion;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+// A touch of second harmonic keeps the curve from reading as a perfectly
+// mechanical, single-frequency sine — closer to how a real light streak
+// drifts and settles.
+float waveY(float x, float t) {
+  float base = sin((x + t) * xScale) * yScale;
+  float ripple = sin((x + t) * xScale * 2.3 + 1.7) * (yScale * 0.05);
+  return base + ripple;
+}
+
+void main() {
+  vec2 p = (gl_FragCoord.xy * 2.0 - resolution) / min(resolution.x, resolution.y);
+  float t = time;
+
+  float d = length(p) * distortion;
+
+  float rx = p.x * (1.0 + d);
+  float gx = p.x;
+  float bx = p.x * (1.0 - d);
+
+  float ry = p.y - waveY(rx, t);
+  float gy = p.y - waveY(gx, t);
+  float by = p.y - waveY(bx, t);
+
+  // Soft bloom-style falloff instead of a raw 1/x spike — the small
+  // epsilon keeps the core from clipping into a hard-edged white disc.
+  float core = 0.020;
+  float eps = 0.0025;
+  vec3 col = vec3(
+    core / (abs(ry) + eps),
+    core / (abs(gy) + eps),
+    core / (abs(by) + eps)
+  );
+
+  // Gentle tonemap so brightness rolls off smoothly near the beam.
+  col = col / (col + 0.9);
+
+  // Vignette to give the scene depth instead of flat edge-to-edge glow.
+  float vig = smoothstep(1.35, 0.15, length(p));
+  col *= mix(0.55, 1.0, vig);
+
+  // Faint film grain — a static, perfectly clean gradient reads as
+  // synthetic; a little noise sells it as a real light source.
+  float grain = (hash(gl_FragCoord.xy + t * 60.0) - 0.5) * 0.035;
+  col += grain;
+
+  gl_FragColor = vec4(col, 1.0);
+}
+      </script>
+
+      <div class="landing-header" id="landingHeader">
+        <div id="headerAuthSlot" class="header-auth-slot"></div>
+      </div>
+
+      <h1 id="brandTitle" class="brand-title">Nightcode</h1>
+
+      <div class="step-explainer" id="step0">
+        <h2>Write code together, live.</h2>
+        <p>Scroll to see how it works.</p>
+      </div>
+      <div class="step-explainer" id="step1">
+        <h2>1. Create a room</h2>
+        <p>Spin up a fresh workspace in one click — no setup, no config.</p>
+      </div>
+      <div class="step-explainer" id="step2">
+        <h2>2. Share the link</h2>
+        <p>Invite anyone with a URL. They're editing alongside you in seconds.</p>
+      </div>
+      <div class="step-explainer" id="step3">
+        <h2>3. Code, run, and talk — together</h2>
+        <p>Live cursors, instant lint, one-click run, voice chat, and full session replay.</p>
+      </div>
+
+      <div class="final-card hidden" id="finalCard"></div>
+
+      <div class="scroll-hint" id="scrollHint">Scroll to enter ↓</div>
+    </div>
+  </div>
+</div>
+
+<div id="editorScreen" class="editor-screen hidden">
+  <header class="topbar">
+    <div class="brand">Nightcode</div>
+    <div class="room-info">
+      Room: <code id="roomIdDisplay"></code>
+      <button id="copyLinkBtn">Copy invite link</button>
+    </div>
+    <select id="languageSelect">
+      <option value="python">Python</option>
+      <option value="javascript">JavaScript</option>
+      <option value="cpp">C++</option>
+      <option value="java">Java</option>
+      <option value="plaintext">Plain text</option>
+    </select>
+    <button id="runBtn" class="topbar-btn">Run</button>
+    <button id="callBtn" class="topbar-btn">Call</button>
+    <button id="replayBtn" class="topbar-btn">Replay</button>
+    <button id="chatToggleBtn" class="topbar-btn">Chat</button>
+    <button id="logoutBtn" class="topbar-btn">Log out</button>
+    <div id="presenceList" class="presence-list"></div>
+  </header>
+
+  <div class="workspace">
+    <div class="editor-column">
+      <div id="editor"></div>
+
+      <div id="replayBar" class="replay-bar hidden">
+        <span>Replay:</span>
+        <input id="replaySlider" type="range" min="0" max="0" value="0">
+        <span id="replayTimestamp"></span>
+        <button id="replayCloseBtn">Exit replay</button>
+      </div>
+
+      <div id="consolePanel" class="console-panel hidden">
+        <div class="console-header">
+          <span>Console output</span>
+          <button id="consoleCloseBtn">✕</button>
+        </div>
+        <pre id="consoleOutput"></pre>
+      </div>
+    </div>
+
+    <div id="chatSidebar" class="chat-sidebar hidden">
+      <div class="chat-header">Room chat</div>
+      <div id="chatMessages" class="chat-messages"></div>
+      <form id="chatForm" class="chat-form">
+        <input id="chatInput" placeholder="Message..." autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="callBar" class="call-bar hidden">
+    <span>Voice call active</span>
+    <div id="remoteAudios"></div>
+    <button id="callLeaveBtn">Leave call</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r124/three.min.js"></script>
+<script src="{{ url_for('static', filename='js/wave-background.js') }}"></script>
+<script src="{{ url_for('static', filename='js/landing.js') }}"></script>
+<script src="{{ url_for('static', filename='js/editor.js') }}"></script>
+</body>
+</html>

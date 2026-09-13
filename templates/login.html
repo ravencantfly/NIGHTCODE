@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sign in — Nightcode</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="auth-body">
+  <div class="auth-card">
+    <h1 class="auth-title">Nightcode</h1>
+    <p class="auth-subtitle">Sign in to create or join a room.</p>
+    <form id="loginForm">
+      <input id="identifier" placeholder="Username or email" autocomplete="username" required>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <div id="authError" class="auth-error hidden"></div>
+      <button type="submit">Sign in</button>
+    </form>
+    <p class="auth-switch">New here? <a href="/signup">Create an account</a></p>
+  </div>
+
+  <script>
+    document.getElementById("loginForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById("authError");
+      errorEl.classList.add("hidden");
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: document.getElementById("identifier").value.trim(),
+          password: document.getElementById("password").value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errorEl.textContent = data.error || "Something went wrong.";
+        errorEl.classList.remove("hidden");
+        return;
+      }
+      window.location.href = new URLSearchParams(window.location.search).get("next") || "/";
+    };
+  </script>
+</body>
+</html>
